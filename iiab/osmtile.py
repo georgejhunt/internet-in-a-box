@@ -15,12 +15,18 @@ MAX_ZOOM = 18
 
 
 class TileSet(object):
-    def __init__(self, tile_path, xmlname, METATILE=8, flatter=False):
+    def __init__(self, tile_path, xmlname, METATILE=8, flatter=False, style="iiab"):
         """flatter=True will turn on the flatter directory paths"""
         self.tile_path = tile_path
         self.xmlname = xmlname
         self.METATILE = METATILE
         self.flatter = flatter
+        self.style = style
+
+    def xyz_to_meta_osm(self, x, y, z):
+        """ OSM standard layout is 2 level per zoom level"""
+        meta = "%s/%s/%d/%u/%u.jpg" % (self.tile_path, self.xmlname, z, x, y)
+        return meta
 
     def xyz_to_meta_deep(self, x, y, z):
         """Deep, sparse directory structure normally used by mod_tile"""
@@ -57,6 +63,8 @@ class TileSet(object):
         return meta
 
     def xyz_to_meta(self, x, y, z):
+        if self.style == "osm":
+            return self.xyz_to_meta_osm(x, y, z)
         if self.flatter:
             return self.xyz_to_meta_flatter(x, y, z)
         return self.xyz_to_meta_deep(x, y, z)
@@ -212,7 +220,14 @@ def meta_load_index(tileset, x, y, z):
     meta_path = tileset.xyz_to_meta(x, y, z)
     if not os.path.exists(meta_path):
         raise TileNotFoundException("Tile file not found at " + meta_path)
+    sizes = []
+    offsets = []
     f = open(meta_path, 'r')
+    if tileset.style == "osm":
+        size = os.path.getsize(meta_path)
+        offsets.append(0)
+        sizes.append(size)
+        return (f, offsets, sizes)
     offset = len(META_MAGIC) + 4 * 4
     offset += (2 * 4) * (METATILE * METATILE)
     magic = f.read(4)
@@ -220,8 +235,6 @@ def meta_load_index(tileset, x, y, z):
         raise TileInvalidFormat("Tile " + meta_path + " is not a valid tile.  Magic " + META_MAGIC + " is not present")
     fmt = "4i"
     (n, x, y, z) = struct.unpack(fmt, f.read(struct.calcsize(fmt)))
-    offsets = []
-    sizes = []
     for mt in range(0, METATILE * METATILE):
         (offset, size) = struct.unpack('2i', f.read(2 * 4))
         offsets.append(offset)
@@ -242,6 +255,10 @@ def meta_load_all(tileset, x, y, z):
                 f.seek(offset)
                 tile = f.read(size)
                 tiles.append((x + xx, y + yy, tile))
+            else:
+                if tileset.style == "osm":
+                    tile = f.read()
+                    tiles.append((x + xx, y + yy, tile))
     return tiles
 
 
@@ -278,7 +295,8 @@ def convert(src, dst, z):
                 for src_x in xrange(x, x + dst.METATILE, src.METATILE):
                     try:
                         tiles.extend(meta_load_all(src, src_x, src_y, z))
-                    except TileNotFoundException:
+                    except TileNotFoundException as e:
+                        #print "ERROR Tile not found: "+ e.message 
                         pass
                     except TileInvalidFormat as e:
                         print "ERROR reading tile: " + e.message
